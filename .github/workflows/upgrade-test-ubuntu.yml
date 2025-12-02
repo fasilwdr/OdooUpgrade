@@ -3,8 +3,12 @@ name: OdooUpgrade Matrix Tests on Ubuntu
 on:
   push:
     branches: [ "main", "dev" ]
+    paths:
+      - "src/**"
   pull_request:
     branches: [ "main", "dev" ]
+    paths:
+      - "src/**"
 
 jobs:
   integration-test:

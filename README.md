@@ -35,8 +35,8 @@ pip install odooupgrader
 ### From Source
 
 ```bash
-git clone https://github.com/fasilwdr/OdooUpgrade.git
-cd OdooUpgrade
+git clone https://github.com/fasilwdr/OdooUpgrader.git
+cd OdooUpgrader
 pip install -e .
 ```
 
