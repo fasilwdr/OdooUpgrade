@@ -1,0 +1,94 @@
+name: OdooUpgrade Matrix Tests on Ubuntu
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  integration-test:
+    name: ${{ matrix.scenario.type }} ${{ matrix.scenario.format }} (14->${{ matrix.scenario.target }}) - Py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Test all python versions
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+        # Test the 4 specific scenarios you requested
+        scenario:
+          - { type: "URL",   format: "zip",  target: "15.0" }
+          - { type: "URL",   format: "dump", target: "16.0" }
+          - { type: "Local", format: "zip",  target: "17.0" }
+          - { type: "Local", format: "dump", target: "15.0" }
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install OdooUpgrade Package
+        run: |
+          pip install --upgrade pip
+          pip install .
+
+      - name: Prepare Test Data
+        id: prep
+        run: |
+          # Define Base URLs
+          URL_ZIP="https://sin1.contabostorage.com/d3aae27d651c48149e4a115494b0c2df:brbucket/backups/test/sample_odoo14.zip"
+          URL_DUMP="https://sin1.contabostorage.com/d3aae27d651c48149e4a115494b0c2df:brbucket/backups/test/sample_odoo14.dump"
+
+          MODE="${{ matrix.scenario.type }}"
+          FORMAT="${{ matrix.scenario.format }}"
+          
+          # 1. Select the correct URL based on format (Zip/Dump)
+          if [ "$FORMAT" == "zip" ]; then
+            TARGET_URL="$URL_ZIP"
+            FILENAME="source.zip"
+          else
+            TARGET_URL="$URL_DUMP"
+            FILENAME="source.dump"
+          fi
+
+          # 2. Handle Local vs URL logic
+          if [ "$MODE" == "Local" ]; then
+            echo "Downloading to local file to simulate local path..."
+            curl -L -o "$FILENAME" "$TARGET_URL"
+            # Pass absolute path
+            SOURCE_ARG="$(pwd)/$FILENAME"
+          else
+            echo "Using URL directly..."
+            SOURCE_ARG="$TARGET_URL"
+          fi
+
+          echo "Selected Source: $SOURCE_ARG"
+          echo "source_arg=$SOURCE_ARG" >> $GITHUB_OUTPUT
+
+      - name: Run Upgrade (14.0 -> ${{ matrix.scenario.target }})
+        run: |
+          odooupgrade \
+            --source "${{ steps.prep.outputs.source_arg }}" \
+            --version "${{ matrix.scenario.target }}" \
+            --verbose
+
+      - name: Verify Output Files
+        if: always()
+        run: |
+          echo "Listing output directory contents:"
+          ls -lh output/ || echo "Output directory not found"
+
+      - name: Check Logs
+        if: failure()
+        run: |
+          if [ -f "output/odoo.log" ]; then
+             echo "!!! UPGRADE FAILED - TAIL LOGS !!!"
+             tail -n 100 output/odoo.log
+          fi

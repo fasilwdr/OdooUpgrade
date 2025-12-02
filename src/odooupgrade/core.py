@@ -7,19 +7,16 @@ import zipfile
 import logging
 from typing import Optional, List
 
-# Third-party imports
 import requests
 from packaging import version
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
 
-# Initialize Rich Console for pretty output
 console = Console()
 logger = logging.getLogger("odooupgrade")
 
 
 class OdooUpgrader:
-    # Valid versions for sanity check
     VALID_VERSIONS = ["10.0", "11.0", "12.0", "13.0", "14.0", "15.0", "16.0", "17.0", "18.0"]
 
     def __init__(self, source: str, target_version: str, verbose: bool = False, postgres_version: str = "13"):
@@ -39,7 +36,6 @@ class OdooUpgrader:
         logger.debug(f"Running command: {cmd_str}")
 
         try:
-            # FIX: Removed explicit stdout/stderr arguments when using capture_output
             result = subprocess.run(
                 cmd,
                 check=check,
@@ -63,8 +59,7 @@ class OdooUpgrader:
                 subprocess.run(["docker-compose", "--version"], check=True, capture_output=True)
                 return ["docker-compose"]
             except (subprocess.CalledProcessError, FileNotFoundError):
-                console.print("[bold red]Error:[/bold red] Neither 'docker compose' nor 'docker-compose' found.")
-                sys.exit(1)
+                return ["docker", "compose"]
 
     def _cleanup_dir(self, path: str):
         """Safely removes a directory."""
@@ -81,7 +76,6 @@ class OdooUpgrader:
 
         if self.source.startswith("http://") or self.source.startswith("https://"):
             try:
-                # Use stream=True to avoid downloading the content, just check headers
                 with requests.get(self.source, stream=True, timeout=15) as response:
                     response.raise_for_status()
                 console.print("[green]Source URL is accessible.[/green]")
@@ -103,7 +97,6 @@ class OdooUpgrader:
         os.makedirs(self.source_dir, exist_ok=True)
         os.makedirs(self.filestore_dir, exist_ok=True)
 
-        # Fix permissions logic (Platform specific)
         if sys.platform != "win32":
             try:
                 os.chmod(self.output_dir, 0o777)
@@ -191,7 +184,7 @@ networks:
 volumes:
   postgres_data:
 """
-        with open("db-composer.yml", "w") as f:
+        with open("db-composer.yml", "w", newline='\n') as f:
             f.write(content.strip())
 
     def wait_for_db(self):
@@ -215,13 +208,11 @@ volumes:
         """Restores the database dump."""
         console.print("[blue]Restoring database...[/blue]")
 
-        # Create empty DB
         self._run_cmd(["docker", "exec", "db-odooupgrade", "createdb", "-U", "odoo", "database"], check=False)
 
         if file_type == "ZIP":
             dump_path = os.path.join(self.source_dir, "dump.sql")
             if not os.path.exists(dump_path):
-                # Try finding any .sql file
                 found_sql = [f for f in os.listdir(self.source_dir) if f.endswith('.sql')]
                 if found_sql:
                     dump_path = os.path.join(self.source_dir, found_sql[0])
@@ -229,15 +220,24 @@ volumes:
                     console.print("[bold red]No dump.sql found inside ZIP.[/bold red]")
                     sys.exit(1)
 
-            # Copy filestore
             src_filestore = os.path.join(self.source_dir, "filestore")
             if os.path.exists(src_filestore):
                 try:
                     shutil.copytree(src_filestore, self.filestore_dir, dirs_exist_ok=True)
+                    if sys.platform != "win32":
+                        try:
+                            os.chmod(self.filestore_dir, 0o777)
+                            for root, dirs, files in os.walk(self.filestore_dir):
+                                for d in dirs:
+                                    os.chmod(os.path.join(root, d), 0o777)
+                                for f in files:
+                                    os.chmod(os.path.join(root, f), 0o777)
+                            logger.info("Filestore permissions corrected.")
+                        except Exception as e:
+                            logger.warning(f"Failed to set filestore permissions: {e}")
                 except Exception as e:
                     logger.warning(f"Failed to copy filestore: {e}")
 
-            # Restore SQL
             self._run_cmd(["docker", "cp", dump_path, "db-odooupgrade:/tmp/dump.sql"])
             self._run_cmd(["docker", "exec", "-i", "db-odooupgrade", "psql", "-U", "odoo", "-d", "database", "-f",
                            "/tmp/dump.sql"], capture_output=True)
@@ -278,9 +278,6 @@ volumes:
     def get_version_info(self, ver_str: str) -> version.Version:
         """Parses version string securely using packaging.version."""
         try:
-            # Handle cases like "15.0.1.2" by taking only first two parts for major version comparison
-            # But packaging.version handles standard versions well.
-            # Odoo versions are essentially Major.0 usually.
             clean_ver = ver_str.strip()
             return version.parse(clean_ver)
         except Exception:
@@ -288,18 +285,15 @@ volumes:
 
     def generate_next_version(self, current: str) -> str:
         """Calculates next major version (e.g. 15.0 -> 16.0)."""
-        # Simple integer math for Odoo major versions
         try:
             major = int(current.split('.')[0])
             return f"{major + 1}.0"
         except Exception:
-            # Fallback
             v = version.parse(current)
             return f"{v.major + 1}.0"
 
     def run_upgrade_step(self, target_version: str) -> bool:
         """Builds and runs the OpenUpgrade container."""
-        # 1. Create Dockerfile
         dockerfile_content = f"""
 FROM odoo:{target_version}
 USER root
@@ -308,10 +302,9 @@ RUN git clone https://github.com/OCA/OpenUpgrade.git --depth 1 --branch {target_
 RUN pip3 install --no-cache-dir -r /mnt/extra-addons/requirements.txt
 USER odoo
 """
-        with open("Dockerfile", "w") as f:
+        with open("Dockerfile", "w", newline='\n') as f:
             f.write(dockerfile_content.strip())
 
-        # 2. Create Compose File
         compose_content = """
 services:
   odoo-openupgrade:
@@ -344,15 +337,13 @@ networks:
     external: true
     name: odooupgrade-connection
 """
-        with open("odoo-upgrade-composer.yml", "w") as f:
+        with open("odoo-upgrade-composer.yml", "w", newline='\n') as f:
             f.write(compose_content.strip())
 
-        # 3. Run Upgrade
         self._run_cmd(["docker", "rm", "-f", "odoo-openupgrade"], check=False, capture_output=True)
 
         cmd_up = self.compose_cmd + ["-f", "odoo-upgrade-composer.yml", "up", "--build", "--abort-on-container-exit"]
 
-        # Display Progress Spinner
         with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -362,7 +353,6 @@ networks:
             task = progress.add_task(f"[bold magenta]Upgrading to {target_version}...", total=None)
 
             try:
-                # We use Popen to keep the spinner alive while the subprocess runs
                 process = subprocess.Popen(
                     cmd_up,
                     stdout=subprocess.DEVNULL if not self.verbose else None,
@@ -382,7 +372,6 @@ networks:
                 console.print(f"[bold red]Error running upgrade:[/bold red] {e}")
                 return False
 
-        # Verify success
         try:
             res = self._run_cmd(["docker", "inspect", "odoo-openupgrade", "--format={{.State.ExitCode}}"],
                                 capture_output=True)
@@ -450,7 +439,6 @@ networks:
             local_source = self.download_or_copy_source()
             file_type = self.process_source_file(local_source)
 
-            # Clean temp downloaded file
             if local_source != self.source and os.path.exists(local_source):
                 os.remove(local_source)
 
@@ -463,7 +451,6 @@ networks:
 
             console.print(f"[bold blue]Current Database Version: {current_ver_str}[/bold blue]")
 
-            # Version comparison using packaging.version
             current_ver = self.get_version_info(current_ver_str)
             target_ver = self.get_version_info(self.target_version)
             min_ver = self.get_version_info("10.0")
@@ -472,12 +459,9 @@ networks:
                 console.print("[bold red]Source database version is below 10.0. Not supported.[/bold red]")
                 sys.exit(1)
 
-            # Upgrade Loop
             while True:
-                # Refresh version info in loop
                 current_ver = self.get_version_info(current_ver_str)
 
-                # We compare major versions primarily for Odoo
                 if current_ver.major == target_ver.major:
                     console.print("[green]Target version reached![/green]")
                     self.finalize_package()

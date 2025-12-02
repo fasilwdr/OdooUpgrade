@@ -1,0 +1,38 @@
+name: OdooUpgrade Installation Test on Windows
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  smoke-test:
+    name: Install Check - Py${{ matrix.python-version }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install OdooUpgrade
+        shell: pwsh
+        run: |
+          pip install --upgrade pip
+          pip install .
+
+      - name: Verify CLI Entry Point
+        shell: pwsh
+        run: |
+          # This proves the executable was created and library paths are correct
+          odooupgrade --help
