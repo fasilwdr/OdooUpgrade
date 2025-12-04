@@ -3,12 +3,12 @@ import logging
 from rich.logging import RichHandler
 from .core import OdooUpgrader
 
-# Configure Rich Logging
+# Configure Base Logging with Rich Handler for Console
 logging.basicConfig(
     level="INFO",
     format="%(message)s",
     datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True)]
+    handlers=[RichHandler(rich_tracebacks=True, show_level=False, show_path=False)]
 )
 
 
@@ -25,6 +25,11 @@ logging.basicConfig(
     help="Target Odoo version"
 )
 @click.option(
+    "--extra-addons",
+    required=False,
+    help="Path to local folder, local .zip, or URL (.zip) containing custom addons"
+)
+@click.option(
     "--verbose",
     is_flag=True,
     help="Enable verbose logging"
@@ -39,7 +44,7 @@ logging.basicConfig(
     type=click.Path(),
     help="Path to log file"
 )
-def main(source, version, verbose, postgres_version, log_file):
+def main(source, version, extra_addons, verbose, postgres_version, log_file):
     """
     Odoo Database Upgrade Tool.
 
@@ -48,12 +53,17 @@ def main(source, version, verbose, postgres_version, log_file):
     """
     if log_file:
         file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
         file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-        logging.getLogger("odooupgrader").addHandler(file_handler)
+
+        logger = logging.getLogger("odooupgrader")
+        logger.addHandler(file_handler)
+        logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
     upgrader = OdooUpgrader(
         source=source,
         target_version=version,
+        extra_addons=extra_addons,
         verbose=verbose,
         postgres_version=postgres_version
     )
